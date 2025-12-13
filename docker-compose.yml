@@ -1,0 +1,11 @@
+services:
+  db:
+    image: postgres
+    container_name: search-flow
+    restart: always
+    environment:
+      POSTGRES_USER: search-flow_user
+      POSTGRES_PASSWORD: search-flow_password
+      POSTGRES_DB: search-flow-db
+    ports:
+      - "5432:5432"
