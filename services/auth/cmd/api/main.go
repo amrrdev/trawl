@@ -6,8 +6,6 @@ import (
 
 	"github.com/amrrdev/trawl/services/auth/internal/config"
 	"github.com/amrrdev/trawl/services/auth/internal/database"
-
-	"github.com/amrrdev/trawl/services/auth/internal/db"
 )
 
 func main() {
@@ -30,6 +28,4 @@ func main() {
 	stats := database.Stats()
 	log.Printf("Active connections: %d", stats.AcquiredConns())
 
-	queries := db.New(database.Pool)
-	_ = queries
 }
