@@ -40,6 +40,7 @@ Instead of: `Document → Words it contains`
 We store: `Word → All documents containing it`
 
 **Example:**
+
 ```
 Document 1: "Golang is great for APIs"
 Document 2: "Building APIs with Node.js"
@@ -54,6 +55,7 @@ Inverted Index:
 ```
 
 When user searches "golang apis", we:
+
 1. Find docs containing "golang": [Doc1, Doc3]
 2. Find docs containing "apis": [Doc1, Doc2]
 3. Intersection: [Doc1] ← Contains BOTH words
@@ -71,37 +73,48 @@ When user searches "golang apis", we:
                          │
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                      API GATEWAY (Go)                        │
-│  - Request routing                                           │
-│  - Authentication                                            │
+│                    NGINX (Load Balancer)                     │
+│  - Reverse proxy                                             │
+│  - SSL termination                                           │
 │  - Rate limiting                                             │
+│  - Request routing                                           │
 └────────────────────────┬────────────────────────────────────┘
                          │
-         ┌───────────────┼───────────────┐
-         ↓               ↓               ↓
-┌─────────────┐  ┌──────────────┐  ┌──────────────┐
-│  INDEXING   │  │    SEARCH    │  │  ANALYTICS   │
-│  SERVICE    │  │   SERVICE    │  │   SERVICE    │
-│             │  │              │  │              │
-│ - Parse     │  │ - Query      │  │ - Track      │
-│   documents │  │   processing │  │   searches   │
-│ - Tokenize  │  │ - Ranking    │  │ - Generate   │
-│ - Build     │  │ - Result     │  │   reports    │
-│   index     │  │   merging    │  │              │
-└──────┬──────┘  └──────┬───────┘  └──────┬───────┘
-       │                │                 │
-       └────────────────┼─────────────────┘
-                        │
-         ┌──────────────┼──────────────┐
-         ↓              ↓              ↓
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  ScyllaDB   │  │   ScyllaDB  │  │  ScyllaDB   │
-│   Shard 1   │  │   Shard 2   │  │   Shard 3   │
-│             │  │             │  │             │
-│ Words: A-H  │  │ Words: I-P  │  │ Words: Q-Z  │
-│             │  │             │  │             │
-│ (Replicated)│  │ (Replicated)│  │ (Replicated)│
-└─────────────┘  └─────────────┘  └─────────────┘
+         ┌───────────────┼───────────────┬──────────────┐
+         ↓               ↓               ↓              ↓
+┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐
+│    AUTH     │  │   INDEXING   │  │    SEARCH    │  │  ANALYTICS  │
+│   SERVICE   │  │   SERVICE    │  │   SERVICE    │  │   SERVICE   │
+│             │  │              │  │              │  │             │
+│ - JWT auth  │  │ - Parse docs │  │ - Query      │  │ - Track     │
+│ - Token     │  │ - Tokenize   │  │   processing │  │   searches  │
+│   validation│  │ - Build      │  │ - Ranking    │  │ - Generate  │
+│ - User mgmt │  │   index      │  │ - Result     │  │   reports   │
+└──────┬──────┘  └──────┬───────┘  │   merging    │  └──────┬──────┘
+       │                │          └──────┬───────┘         │
+       │                │                 │                 │
+       │                ↓                 │                 │
+       │         ┌─────────────┐          │                 │
+       │         │  RabbitMQ   │          │                 │
+       │         │             │          │                 │
+       │         │ - Indexing  │          │                 │
+       │         │   queue     │          │                 │
+       │         │ - Async     │          │                 │
+       │         │   tasks     │          │                 │
+       │         └──────┬──────┘          │                 │
+       │                │                 │                 │
+       └────────────────┼─────────────────┼─────────────────┘
+                        │                 │
+         ┌──────────────┼─────────────────┼─────────────┐
+         ↓              ↓                 ↓             ↓
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  ScyllaDB   │  │  ScyllaDB   │  │  ScyllaDB   │  │  PostgreSQL │
+│   Shard 1   │  │   Shard 2   │  │   Shard 3   │  │             │
+│             │  │             │  │             │  │ - Users     │
+│ Words: A-H  │  │ Words: I-P  │  │ Words: Q-Z  │  │ - API keys  │
+│             │  │             │  │             │  │ - Auth data │
+│ (Replicated)│  │ (Replicated)│  │ (Replicated)│  │             │
+└─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘
                         │
                         ↓
               ┌──────────────────┐
@@ -118,75 +131,236 @@ When user searches "golang apis", we:
 
 ## 🔧 Key Components
 
-### 1. **Indexing Service**
+### 1. **Nginx (Load Balancer & Reverse Proxy)**
 
-**Responsibility:** Transform documents into searchable inverted indexes
+**Responsibilities:**
+
+- Routes requests to appropriate services
+- SSL/TLS termination
+- Rate limiting per IP/user
+- Request/response compression
+- Static file serving (UI)
+- Health check endpoints
+
+**Configuration Example:**
+
+```nginx
+upstream auth_service {
+    server auth:8081;
+    server auth:8082;
+}
+
+upstream search_service {
+    server search:8083;
+    server search:8084;
+    server search:8085;
+}
+
+upstream indexer_service {
+    server indexer:8086;
+}
+
+server {
+    listen 80;
+
+    location /api/v1/auth {
+        proxy_pass http://auth_service;
+    }
+
+    location /api/v1/search {
+        proxy_pass http://search_service;
+    }
+
+    location /api/v1/documents {
+        proxy_pass http://indexer_service;
+    }
+}
+```
+
+---
+
+### 2. **Auth Service**
+
+**Responsibilities:**
+
+- User registration/login
+- JWT token generation and validation
+- API key management
+- Role-based access control (RBAC)
+
+**Tech Stack:** Go + PostgreSQL
+
+**Endpoints:**
+
+```
+POST   /api/v1/auth/register
+POST   /api/v1/auth/login
+POST   /api/v1/auth/refresh
+GET    /api/v1/auth/validate
+DELETE /api/v1/auth/logout
+```
+
+**JWT Flow:**
+
+```
+1. User logs in → Auth service validates
+2. Return JWT token (expires in 1 hour)
+3. Client includes token in headers: Authorization: Bearer <token>
+4. All services validate token via Auth service or shared secret
+```
+
+---
+
+### 3. **Indexing Service**
+
+**Responsibilities:**
+
+- Accept document uploads
+- Extract text from various formats
+- Publish indexing jobs to RabbitMQ
+- Process async indexing tasks (worker mode)
 
 **Process Flow:**
+
 ```
-Document Upload
+Document Upload (API)
     ↓
-Extract Text (PDF/JSON/TXT parser)
+Validate & Store in MinIO
     ↓
-Tokenization (split into words)
+Publish message to RabbitMQ
     ↓
-Normalization (lowercase, remove punctuation)
+Return immediately to user (202 Accepted)
+
+--- Async Processing ---
+
+Worker consumes from RabbitMQ
     ↓
-Stop Words Removal (remove "the", "is", "a")
+Extract text
     ↓
-Stemming (running → run, cats → cat)
-    ↓
-Build Inverted Index
+Tokenize & build index
     ↓
 Store in ScyllaDB
     ↓
-Upload Original Document to MinIO
+Update document status
 ```
 
 **Input:**
+
 - Document ID: `uuid`
 - Document content: `binary/text`
 - Metadata: `{ title, author, type, tags }`
 
 **Output:**
+
 - Inverted index entries in ScyllaDB
 - Document stored in MinIO
-- Indexing status: `success/failure`
+- Job status: `queued/processing/completed/failed`
 
 ---
 
-### 2. **Search Service**
+### 4. **RabbitMQ (Message Broker)**
 
-**Responsibility:** Process queries and return ranked results
+**Why RabbitMQ?**
+
+- ✅ Simpler than Kafka for this use case
+- ✅ Built-in retry and dead-letter queues
+- ✅ Better for job queues (vs Kafka's event streaming)
+- ✅ Lower operational overhead
+- ✅ Excellent Go client library
+
+**Queues:**
+
+```
+┌──────────────────────────┐
+│  indexing_queue          │
+│                          │
+│  - Document indexing     │
+│  - Priority: Normal      │
+│  - TTL: 1 hour           │
+│  - Prefetch: 10          │
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│  indexing_queue_dlq      │
+│  (Dead Letter Queue)     │
+│                          │
+│  - Failed jobs after 3   │
+│    retries               │
+│  - Manual intervention   │
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│  analytics_queue         │
+│                          │
+│  - Search tracking       │
+│  - Low priority          │
+│  - Batch processing      │
+└──────────────────────────┘
+```
+
+**Message Format:**
+
+```json
+{
+  "job_id": "uuid",
+  "type": "document_indexing",
+  "payload": {
+    "doc_id": "abc-123",
+    "file_path": "documents/abc-123.pdf",
+    "metadata": {
+      "title": "Golang Tutorial",
+      "author": "John Doe"
+    }
+  },
+  "created_at": "2025-01-15T10:30:00Z",
+  "retry_count": 0
+}
+```
+
+---
+
+### 5. **Search Service**
+
+**Responsibilities:**
+
+- Process search queries
+- Coordinate distributed queries across shards
+- Rank and merge results
+- Apply filters and facets
 
 **Query Processing Pipeline:**
+
 ```
 User Query: "golang tutorials"
     ↓
+Validate JWT token
+    ↓
 Tokenize: ["golang", "tutorials"]
     ↓
-Normalize: ["golang", "tutorial"] (stemming)
+Normalize: ["golang", "tutorial"]
     ↓
-Query ScyllaDB Shards (parallel)
+Query ScyllaDB shards (parallel)
     ↓
-Retrieve Document IDs
+Retrieve document IDs
     ↓
-Calculate TF-IDF Scores
+Calculate TF-IDF scores
     ↓
-Rank Results
+Rank results
     ↓
-Fetch Top Documents from MinIO
+Fetch top documents from MinIO
     ↓
-Return Results to User
+Return results to user
 ```
 
 **Input:**
+
 - Search query: `string`
 - Filters: `{ type, date_range, author }`
 - Pagination: `{ page, limit }`
 - Ranking preference: `relevance/date/popularity`
 
 **Output:**
+
 ```json
 {
   "total_results": 1234,
@@ -197,87 +371,46 @@ Return Results to User
       "title": "Golang Tutorial for Beginners",
       "snippet": "...learn golang fundamentals...",
       "score": 0.89,
-      "url": "https://minio/docs/abc-123",
-      "metadata": {
-        "author": "John Doe",
-        "type": "article",
-        "date": "2025-01-15"
-      }
+      "url": "https://minio/docs/abc-123"
     }
-  ],
-  "facets": {
-    "type": { "article": 890, "video": 234, "book": 110 },
-    "year": { "2025": 123, "2024": 345, "2023": 456 }
-  }
+  ]
 }
 ```
 
 ---
 
-### 3. **Query Coordinator**
+### 6. **Analytics Service**
 
-**Responsibility:** Distribute queries across multiple shards and merge results
+**Responsibilities:**
 
-**Distributed Query Execution:**
-```go
-// Pseudo-code
-func DistributedSearch(query string) SearchResults {
-    tokens := tokenize(query)
-    
-    // Determine which shards to query
-    shards := getRelevantShards(tokens)
-    
-    // Query all shards in parallel
-    resultChan := make(chan ShardResult, len(shards))
-    for _, shard := range shards {
-        go func(s Shard) {
-            resultChan <- s.Search(tokens)
-        }(shard)
-    }
-    
-    // Collect results from all shards
-    var allResults []Document
-    for i := 0; i < len(shards); i++ {
-        result := <-resultChan
-        allResults = append(allResults, result.Docs...)
-    }
-    
-    // Merge and re-rank globally
-    return mergeAndRank(allResults)
-}
-```
-
----
-
-### 4. **Analytics Service**
-
-**Responsibility:** Track search patterns and system performance
+- Track search queries
+- Monitor system performance
+- Generate reports and insights
+- Consume analytics events from RabbitMQ
 
 **Metrics Collected:**
+
 - Search query frequency
 - Query response times
 - Popular search terms
-- Zero-result queries (to improve index)
-- User click-through rates
+- Zero-result queries
+- Click-through rates
 - System health metrics
-
-**Output:**
-- Dashboard showing search trends
-- Slow query reports
-- Search improvement suggestions
 
 ---
 
 ## 🛠️ Technology Stack
 
-| Component | Technology | Why? |
-|-----------|-----------|------|
-| **Backend** | Go (Golang) | High performance, excellent concurrency (goroutines), statically typed |
-| **Database (Index)** | ScyllaDB | Ultra-fast reads (<10ms), horizontal scalability, Cassandra-compatible |
-| **Object Storage** | MinIO | S3-compatible, perfect for storing large documents |
-| **Message Queue** | (Optional) Kafka/RabbitMQ | For async indexing of large document batches |
-| **Cache** | (Optional) Redis | For caching hot queries and autocomplete |
-| **Monitoring** | Prometheus + Grafana | System metrics and performance monitoring |
+| Component            | Technology              | Why?                                                      |
+| -------------------- | ----------------------- | --------------------------------------------------------- |
+| **Backend Services** | Go (Golang)             | High performance, excellent concurrency, statically typed |
+| **Load Balancer**    | Nginx                   | Industry standard, SSL termination, rate limiting         |
+| **Authentication**   | PostgreSQL + JWT        | Relational data for users, secure token-based auth        |
+| **Message Broker**   | RabbitMQ                | Simple, reliable job queues, built-in retry logic         |
+| **Database (Index)** | ScyllaDB                | Ultra-fast reads (<10ms), horizontal scalability          |
+| **Object Storage**   | MinIO                   | S3-compatible, perfect for large documents                |
+| **Monitoring**       | Prometheus + Grafana    | System metrics and performance monitoring                 |
+| **Containerization** | Docker + Docker Compose | Easy local development and deployment                     |
 
 ---
 
@@ -285,21 +418,32 @@ func DistributedSearch(query string) SearchResults {
 
 ### Core Features
 
-#### 1. **Full-Text Search**
+#### 1. **User Authentication**
+
+- JWT-based authentication
+- Secure password hashing (bcrypt)
+- Token refresh mechanism
+- API key management
+- Role-based access control
+
+#### 2. **Full-Text Search**
+
 - Search across document content
-- Support for multi-word queries
+- Multi-word queries
 - Boolean operators: AND, OR, NOT
 - Phrase search: "exact phrase matching"
 
 **Example:**
+
 ```
 Query: golang AND (tutorial OR guide)
 Returns: Documents containing "golang" AND either "tutorial" or "guide"
 ```
 
-#### 2. **Relevance Ranking (TF-IDF)**
+#### 3. **Relevance Ranking (TF-IDF)**
 
 **Term Frequency (TF):**
+
 ```
 TF = (Number of times term appears in document) / (Total terms in document)
 
@@ -309,6 +453,7 @@ TF = 5/100 = 0.05
 ```
 
 **Inverse Document Frequency (IDF):**
+
 ```
 IDF = log(Total documents / Documents containing term)
 
@@ -321,6 +466,7 @@ IDF = log(10,000/9,000) = 0.046 ← Less important!
 ```
 
 **Final Score:**
+
 ```
 Score = TF × IDF
 
@@ -330,7 +476,21 @@ Score = TF × IDF
 "golang" is more relevant despite appearing less frequently!
 ```
 
-#### 3. **Faceted Search (Filters)**
+#### 4. **Asynchronous Indexing**
+
+Documents are indexed asynchronously for better UX:
+
+```
+User uploads document
+    ↓
+API returns immediately: "Document queued for indexing"
+    ↓
+Background worker processes indexing
+    ↓
+User can check status: /documents/{id}/status
+```
+
+#### 5. **Faceted Search (Filters)**
 
 Allow users to refine results by categories:
 
@@ -355,7 +515,7 @@ Filters:
    ☐ 2023 (1,567)
 ```
 
-#### 4. **Autocomplete (Type-ahead)**
+#### 6. **Autocomplete (Type-ahead)**
 
 Suggest queries as user types:
 
@@ -368,100 +528,109 @@ Suggestions:
 3. machiavelli (234 searches)
 ```
 
-**Implementation:** Prefix tree (Trie) data structure
-
-```
-        m
-        |
-        a
-        |
-        c
-        |
-        h ──┬── i → machine (freq: 15,801)
-            └── i → machiavelli (freq: 234)
-```
-
-#### 5. **Search Analytics**
+#### 7. **Search Analytics**
 
 Track and visualize:
+
 - Most popular queries
-- Query performance (response times)
-- Zero-result queries (needs index improvement)
+- Query performance
+- Zero-result queries
 - Peak usage times
 - Click-through rates
 
 ---
 
-### Advanced Features (Optional Enhancements)
+## 🔄 Data Flow
 
-#### 6. **Fuzzy Search (Typo Tolerance)**
-
-Handle typos using edit distance:
+### Authentication Flow
 
 ```
-User searches: "golng" (typo)
-System suggests: "golang" (edit distance: 1)
-
-Algorithm: Levenshtein distance
-- golng → golang: 1 character addition
-```
-
-#### 7. **Synonym Expansion**
-
-```
-User searches: "car"
-System also searches: ["automobile", "vehicle"]
-
-Expands results without user effort
-```
-
-#### 8. **Highlighting**
-
-Show matched terms in results:
-
-```
-Result snippet:
-"Learn **Golang** fundamentals and build scalable **APIs** 
-with this comprehensive **tutorial**."
+┌─────────────┐
+│   Client    │
+└──────┬──────┘
+       │ POST /auth/login
+       ↓
+┌──────────────────┐
+│     Nginx        │
+└──────┬───────────┘
+       │
+       ↓
+┌──────────────────┐
+│  Auth Service    │
+│                  │
+│ 1. Validate      │
+│ 2. Check DB      │
+│ 3. Generate JWT  │
+└──────┬───────────┘
+       │
+       ↓
+┌──────────────────┐
+│   PostgreSQL     │
+│   (User data)    │
+└──────────────────┘
+       │
+       ↓
+┌──────────────┐
+│   Client     │
+│ (JWT token)  │
+└──────────────┘
 ```
 
 ---
 
-## 🔄 Data Flow
-
-### Indexing Flow
+### Indexing Flow (Async with RabbitMQ)
 
 ```
 ┌─────────────┐
 │   Client    │
 │ (Upload Doc)│
 └──────┬──────┘
-       │
+       │ POST /documents (with JWT)
        ↓
 ┌──────────────────┐
-│  API Gateway     │
-│  POST /documents │
+│     Nginx        │
 └──────┬───────────┘
        │
        ↓
 ┌──────────────────────────┐
 │   Indexing Service       │
+│   (API Mode)             │
 │                          │
-│  1. Parse document       │
-│  2. Extract text         │
-│  3. Tokenize             │
-│  4. Build inverted index │
-└──────┬─────────┬─────────┘
-       │         │
-       │         └─────────────┐
-       ↓                       ↓
-┌─────────────┐        ┌──────────────┐
-│  ScyllaDB   │        │    MinIO     │
-│             │        │              │
-│ Store index │        │ Store        │
-│ entries     │        │ original doc │
-└─────────────┘        └──────────────┘
+│  1. Validate JWT         │
+│  2. Store doc in MinIO   │
+│  3. Publish to RabbitMQ  │
+│  4. Return 202 Accepted  │
+└──────┬───────────────────┘
+       │
+       ↓
+┌──────────────────┐         ┌──────────────┐
+│    RabbitMQ      │         │    MinIO     │
+│                  │         │              │
+│  indexing_queue  │         │ Original doc │
+└──────┬───────────┘         └──────────────┘
+       │
+       │ (Worker consumes)
+       ↓
+┌──────────────────────────┐
+│   Indexing Service       │
+│   (Worker Mode)          │
+│                          │
+│  1. Extract text         │
+│  2. Tokenize             │
+│  3. Build inverted index │
+│  4. Store in ScyllaDB    │
+└──────┬───────────────────┘
+       │
+       ↓
+┌─────────────┐
+│  ScyllaDB   │
+│             │
+│ Inverted    │
+│ Index       │
+└─────────────┘
 ```
+
+---
 
 ### Search Flow
 
@@ -470,20 +639,20 @@ with this comprehensive **tutorial**."
 │   Client    │
 │ (Search)    │
 └──────┬──────┘
-       │
+       │ GET /search?q=golang (with JWT)
        ↓
 ┌──────────────────┐
-│  API Gateway     │
-│  GET /search?q=  │
+│     Nginx        │
 └──────┬───────────┘
        │
        ↓
 ┌────────────────────────┐
 │   Search Service       │
 │                        │
-│  1. Parse query        │
-│  2. Tokenize           │
-│  3. Query coordinator  │
+│  1. Validate JWT       │
+│  2. Parse query        │
+│  3. Tokenize           │
+│  4. Query coordinator  │
 └──────┬─────────────────┘
        │
        ↓
@@ -513,9 +682,7 @@ with this comprehensive **tutorial**."
 ┌──────────────────┐
 │  Document        │
 │  Fetcher         │
-│                  │
-│  Get full docs   │
-│  from MinIO      │
+│  (MinIO)         │
 └──────┬───────────┘
        │
        ↓
@@ -523,103 +690,128 @@ with this comprehensive **tutorial**."
 │   Client     │
 │  (Results)   │
 └──────────────┘
+       │
+       │ (Track search asynchronously)
+       ↓
+┌──────────────────┐
+│    RabbitMQ      │
+│                  │
+│ analytics_queue  │
+└──────┬───────────┘
+       │
+       ↓
+┌──────────────────┐
+│  Analytics       │
+│  Service         │
+└──────────────────┘
 ```
 
 ---
 
 ## 🗄️ Database Schema
 
+### PostgreSQL (Auth Service)
+
+#### Users Table
+
+```sql
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255),
+    role VARCHAR(50) DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP,
+    is_active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX idx_users_email ON users(email);
+```
+
+#### API Keys Table
+
+```sql
+CREATE TABLE api_keys (
+    key_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(user_id),
+    api_key VARCHAR(64) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    last_used TIMESTAMP,
+    is_active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX idx_api_keys_key ON api_keys(api_key);
+CREATE INDEX idx_api_keys_user ON api_keys(user_id);
+```
+
+---
+
 ### ScyllaDB Tables
 
-#### 1. **Inverted Index Table**
+#### 1. Inverted Index Table
 
 ```sql
 CREATE TABLE inverted_index (
-    word TEXT,                    -- Indexed term (normalized)
-    doc_id UUID,                  -- Document identifier
-    term_frequency INT,           -- How many times term appears in doc
-    positions LIST<INT>,          -- Positions where term appears
-    field TEXT,                   -- Which field (title, body, tags)
+    word TEXT,
+    doc_id UUID,
+    term_frequency INT,
+    positions LIST<INT>,
+    field TEXT,
     PRIMARY KEY (word, doc_id)
 ) WITH CLUSTERING ORDER BY (doc_id ASC);
-
--- Example data:
-┌─────────┬──────────────────────┬──────────┬────────────┬────────┐
-│ word    │ doc_id               │ term_freq│ positions  │ field  │
-├─────────┼──────────────────────┼──────────┼────────────┼────────┤
-│ golang  │ 123e4567-e89b-12d3...│ 5        │ [1,15,23...│ body   │
-│ golang  │ 789e4567-e89b-12d3...│ 2        │ [5,18]     │ title  │
-│ api     │ 123e4567-e89b-12d3...│ 3        │ [10,25,40] │ body   │
-└─────────┴──────────────────────┴──────────┴────────────┴────────┘
 ```
 
-#### 2. **Document Metadata Table**
+#### 2. Document Metadata Table
 
 ```sql
 CREATE TABLE documents (
     doc_id UUID PRIMARY KEY,
     title TEXT,
     author TEXT,
-    doc_type TEXT,              -- article, video, book, etc.
+    doc_type TEXT,
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
-    file_path TEXT,             -- MinIO object path
+    file_path TEXT,
     file_size BIGINT,
     tags SET<TEXT>,
     total_words INT,
-    language TEXT
+    language TEXT,
+    status TEXT,
+    indexed_at TIMESTAMP,
+    owner_id UUID
 );
 
--- Example data:
-┌──────────────────────┬─────────────────────┬──────────┬──────────┐
-│ doc_id               │ title               │ author   │ doc_type │
-├──────────────────────┼─────────────────────┼──────────┼──────────┤
-│ 123e4567-e89b-12d3...│ Golang Tutorial     │ John Doe │ article  │
-│ 789e4567-e89b-12d3...│ API Design Patterns │ Jane Doe │ book     │
-└──────────────────────┴─────────────────────┴──────────┴──────────┘
+CREATE INDEX idx_documents_owner ON documents(owner_id);
+CREATE INDEX idx_documents_status ON documents(status);
 ```
 
-#### 3. **Global Statistics Table**
+#### 3. Global Statistics Table
 
 ```sql
 CREATE TABLE global_stats (
     word TEXT PRIMARY KEY,
-    document_frequency INT,     -- Number of docs containing this word
-    total_frequency BIGINT,     -- Total occurrences across all docs
+    document_frequency INT,
+    total_frequency BIGINT,
     last_updated TIMESTAMP
 );
-
--- Used for IDF calculation
-┌─────────┬────────────┬─────────────┐
-│ word    │ doc_freq   │ total_freq  │
-├─────────┼────────────┼─────────────┤
-│ golang  │ 1,234      │ 15,678      │
-│ the     │ 98,765     │ 1,234,567   │
-│ api     │ 5,678      │ 45,890      │
-└─────────┴────────────┴─────────────┘
 ```
 
-#### 4. **Autocomplete Table**
+#### 4. Autocomplete Table
 
 ```sql
 CREATE TABLE autocomplete (
     prefix TEXT,
     suggestion TEXT,
-    frequency INT,              -- How often this query was searched
+    frequency INT,
     PRIMARY KEY (prefix, frequency, suggestion)
 ) WITH CLUSTERING ORDER BY (frequency DESC);
-
--- Example: prefix "gol"
-┌────────┬────────────────┬───────────┐
-│ prefix │ suggestion     │ frequency │
-├────────┼────────────────┼───────────┤
-│ gol    │ golang         │ 10,000    │
-│ gol    │ gold price     │ 5,000     │
-│ gol    │ golf courses   │ 3,000     │
-└────────┴────────────────┴───────────┘
 ```
 
-#### 5. **Search Analytics Table**
+#### 5. Search Analytics Table
 
 ```sql
 CREATE TABLE search_analytics (
@@ -628,15 +820,9 @@ CREATE TABLE search_analytics (
     search_count COUNTER,
     avg_response_time_ms INT,
     zero_results_count COUNTER,
-    PRIMARY KEY (date, query)
+    user_id UUID,
+    PRIMARY KEY ((date), query, user_id)
 );
-
-┌────────────┬──────────────────┬──────────┬──────────────┐
-│ date       │ query            │ count    │ avg_time_ms  │
-├────────────┼──────────────────┼──────────┼──────────────┤
-│ 2025-01-15 │ golang tutorials │ 1,234    │ 45           │
-│ 2025-01-15 │ react hooks      │ 890      │ 38           │
-└────────────┴──────────────────┴──────────┴──────────────┘
 ```
 
 ---
@@ -646,27 +832,86 @@ CREATE TABLE search_analytics (
 ```
 searchflow-bucket/
 ├── documents/
-│   ├── 123e4567-e89b-12d3-a456-426614174000.pdf
-│   ├── 789e4567-e89b-12d3-a456-426614174001.json
-│   └── 456e4567-e89b-12d3-a456-426614174002.txt
+│   ├── user-uuid-1/
+│   │   ├── 123e4567-e89b-12d3-a456-426614174000.pdf
+│   │   └── 789e4567-e89b-12d3-a456-426614174001.json
+│   ├── user-uuid-2/
+│   │   └── 456e4567-e89b-12d3-a456-426614174002.txt
 │
-├── thumbnails/          (optional: for preview images)
-│   ├── 123e4567.jpg
-│   └── 789e4567.jpg
-│
-└── metadata/            (optional: cached metadata)
-    └── index_stats.json
+└── thumbnails/
+    └── 123e4567.jpg
 ```
 
 ---
 
 ## 🌐 API Endpoints
 
-### 1. **Document Management**
+### Authentication Endpoints
+
+#### Register User
+
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!",
+  "full_name": "John Doe"
+}
+
+Response 201:
+{
+  "user_id": "123e4567-e89b-12d3...",
+  "email": "user@example.com",
+  "full_name": "John Doe"
+}
+```
+
+#### Login
+
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!"
+}
+
+Response 200:
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+#### Validate Token
+
+```http
+GET /api/v1/auth/validate
+Authorization: Bearer <token>
+
+Response 200:
+{
+  "valid": true,
+  "user_id": "123e4567-e89b-12d3...",
+  "email": "user@example.com",
+  "role": "user"
+}
+```
+
+---
+
+### Document Management Endpoints
 
 #### Upload Document
+
 ```http
 POST /api/v1/documents
+Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
 {
@@ -677,17 +922,38 @@ Content-Type: multipart/form-data
   "tags": ["golang", "programming", "tutorial"]
 }
 
-Response 201:
+Response 202:
 {
   "doc_id": "123e4567-e89b-12d3-a456-426614174000",
-  "status": "indexing",
-  "message": "Document uploaded and indexing started"
+  "status": "queued",
+  "message": "Document queued for indexing",
+  "status_url": "/api/v1/documents/123e4567.../status"
 }
 ```
 
+#### Check Indexing Status
+
+```http
+GET /api/v1/documents/{doc_id}/status
+Authorization: Bearer <token>
+
+Response 200:
+{
+  "doc_id": "123e4567...",
+  "status": "completed",
+  "progress": 100,
+  "message": "Document successfully indexed",
+  "indexed_at": "2025-01-15T10:35:00Z"
+}
+
+Possible statuses: queued, processing, completed, failed
+```
+
 #### Get Document
+
 ```http
 GET /api/v1/documents/{doc_id}
+Authorization: Bearer <token>
 
 Response 200:
 {
@@ -699,25 +965,52 @@ Response 200:
     "type": "article",
     "created_at": "2025-01-15T10:30:00Z",
     "file_size": 2048576,
-    "word_count": 5432
+    "word_count": 5432,
+    "status": "completed"
   }
 }
 ```
 
+#### List User Documents
+
+```http
+GET /api/v1/documents?page=1&limit=20
+Authorization: Bearer <token>
+
+Response 200:
+{
+  "total": 156,
+  "page": 1,
+  "limit": 20,
+  "documents": [
+    {
+      "doc_id": "123e4567...",
+      "title": "Golang Tutorial",
+      "status": "completed",
+      "created_at": "2025-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
 #### Delete Document
+
 ```http
 DELETE /api/v1/documents/{doc_id}
+Authorization: Bearer <token>
 
 Response 204: No Content
 ```
 
 ---
 
-### 2. **Search**
+### Search Endpoints
 
 #### Basic Search
+
 ```http
 GET /api/v1/search?q=golang+tutorials&page=1&limit=10
+Authorization: Bearer <token>
 
 Response 200:
 {
@@ -736,8 +1029,7 @@ Response 200:
       "metadata": {
         "author": "John Doe",
         "type": "article",
-        "date": "2025-01-15",
-        "tags": ["golang", "programming"]
+        "date": "2025-01-15"
       }
     }
   ]
@@ -745,15 +1037,16 @@ Response 200:
 ```
 
 #### Advanced Search with Filters
+
 ```http
-GET /api/v1/search?q=golang&type=article&author=John+Doe&from=2024-01-01&to=2025-01-01
+GET /api/v1/search?q=golang&type=article&from=2024-01-01&to=2025-01-01
+Authorization: Bearer <token>
 
 Response 200:
 {
   "query": "golang",
   "filters_applied": {
     "type": "article",
-    "author": "John Doe",
     "date_range": "2024-01-01 to 2025-01-01"
   },
   "total_results": 234,
@@ -762,8 +1055,10 @@ Response 200:
 ```
 
 #### Faceted Search
+
 ```http
 GET /api/v1/search?q=machine+learning&facets=type,year,author
+Authorization: Bearer <token>
 
 Response 200:
 {
@@ -778,11 +1073,6 @@ Response 200:
       "2025": 876,
       "2024": 2345,
       "2023": 1567
-    },
-    "author": {
-      "John Doe": 234,
-      "Jane Smith": 456,
-      "Bob Johnson": 189
     }
   }
 }
@@ -790,181 +1080,106 @@ Response 200:
 
 ---
 
-### 3. **Autocomplete**
+### Autocomplete Endpoint
 
 ```http
 GET /api/v1/autocomplete?q=gol&limit=5
+Authorization: Bearer <token>
 
 Response 200:
 {
   "prefix": "gol",
   "suggestions": [
     { "text": "golang", "frequency": 10000 },
-    { "text": "gold price", "frequency": 5000 },
-    { "text": "golf courses", "frequency": 3000 },
     { "text": "golang tutorial", "frequency": 2500 },
-    { "text": "golden retriever", "frequency": 1200 }
+    { "text": "gold price", "frequency": 5000 }
   ]
 }
 ```
 
 ---
 
-### 4. **Analytics**
+### Analytics Endpoints
 
 #### Search Trends
+
 ```http
 GET /api/v1/analytics/trends?period=7d
+Authorization: Bearer <token>
 
 Response 200:
 {
   "period": "last_7_days",
   "top_queries": [
     { "query": "golang tutorials", "count": 8765 },
-    { "query": "react hooks", "count": 6543 },
-    { "query": "docker compose", "count": 5432 }
-  ],
-  "query_volume": {
-    "2025-01-09": 15678,
-    "2025-01-10": 16234,
-    "2025-01-11": 14567
-  }
+    { "query": "react hooks", "count": 6543 }
+  ]
 }
 ```
 
 #### System Health
+
 ```http
 GET /api/v1/analytics/health
+Authorization: Bearer <token>
 
 Response 200:
 {
   "status": "healthy",
+  "services": {
+    "auth": "healthy",
+    "search": "healthy",
+    "indexer": "healthy",
+    "rabbitmq": "healthy",
+    "scylladb": "healthy"
+  },
   "shards": [
-    { "id": "shard-1", "status": "healthy", "doc_count": 3456789 },
-    { "id": "shard-2", "status": "healthy", "doc_count": 3234567 },
-    { "id": "shard-3", "status": "healthy", "doc_count": 3567890 }
-  ],
-  "avg_query_time_ms": 42,
-  "p95_query_time_ms": 78,
-  "p99_query_time_ms": 145
-}
+  { "id": "shard-1", "status": "healthy", "doc_count": 3456789 }
+    ]
+  }
 ```
 
 ---
 
 ## 🧮 Algorithms & Techniques
 
-### 1. **Tokenization**
-
-Break text into words (tokens):
+### 1. Tokenization
 
 ```go
 Input:  "Golang is GREAT for building APIs!"
 Steps:
   1. Lowercase: "golang is great for building apis!"
   2. Remove punctuation: "golang is great for building apis"
-  3. Split by whitespace: ["golang", "is", "great", "for", "building", "apis"]
+  3. Split: ["golang", "is", "great", "for", "building", "apis"]
   4. Remove stopwords: ["golang", "great", "building", "apis"]
 Output: ["golang", "great", "building", "apis"]
 ```
 
-### 2. **Stemming/Lemmatization**
-
-Reduce words to their root form:
+### 2. Stemming
 
 ```
 running   → run
-runs      → run
-ran       → run
-better    → good
-cats      → cat
 tutorials → tutorial
+cats      → cat
 ```
 
-**Algorithm:** Porter Stemmer or Snowball Stemmer
-
-### 3. **TF-IDF Calculation**
+### 3. TF-IDF Calculation
 
 ```go
-// Pseudo-code
-func CalculateTFIDF(term string, docID string, totalDocs int) float64 {
-    // Term Frequency (TF)
-    termFreqInDoc := getTermFrequency(term, docID)
-    totalTermsInDoc := getTotalTerms(docID)
+func CalculateTFIDF(term, docID string, totalDocs int) float64 {
     tf := float64(termFreqInDoc) / float64(totalTermsInDoc)
-    
-    // Inverse Document Frequency (IDF)
-    docsContainingTerm := getDocumentFrequency(term)
     idf := math.Log(float64(totalDocs) / float64(docsContainingTerm))
-    
-    // TF-IDF Score
     return tf * idf
 }
-
-// Example:
-// Document: 100 words, "golang" appears 5 times
-// Total docs: 10,000, "golang" in 100 docs
-// TF = 5/100 = 0.05
-// IDF = log(10,000/100) = 2.0
-// TF-IDF = 0.05 * 2.0 = 0.10
 ```
 
-### 4. **BM25 Ranking (Advanced Alternative to TF-IDF)**
-
-BM25 improves upon TF-IDF with document length normalization:
-
-```go
-func CalculateBM25(term string, docID string, avgDocLength float64) float64 {
-    k1 := 1.2  // Term frequency saturation parameter
-    b := 0.75  // Length normalization parameter
-    
-    termFreq := getTermFrequency(term, docID)
-    docLength := getDocumentLength(docID)
-    idf := calculateIDF(term)
-    
-    numerator := termFreq * (k1 + 1)
-    denominator := termFreq + k1 * (1 - b + b * (docLength / avgDocLength))
-    
-    return idf * (numerator / denominator)
-}
-```
-
-### 5. **Consistent Hashing (Shard Selection)**
-
-Determine which shard stores a term:
+### 4. Consistent Hashing (Shard Selection)
 
 ```go
 func GetShard(term string, numShards int) int {
     hash := crc32.ChecksumIEEE([]byte(term))
     return int(hash % uint32(numShards))
 }
-
-// Example:
-// "golang" → hash → 123456789 → 123456789 % 3 = Shard 0
-// "react"  → hash → 987654321 → 987654321 % 3 = Shard 0
-// "python" → hash → 456789123 → 456789123 % 3 = Shard 0
-```
-
-### 6. **Query Optimization**
-
-```go
-// Optimize query by starting with rarest terms
-func OptimizeQuery(terms []string) []string {
-    // Sort terms by document frequency (ascending)
-    // Process rarest terms first to reduce result set quickly
-    
-    sort.Slice(terms, func(i, j int) bool {
-        return getDocumentFrequency(terms[i]) < getDocumentFrequency(terms[j])
-    })
-    
-    return terms
-}
-
-// Example:
-// Query: "the golang tutorial"
-// Doc frequencies: "the" (9000), "golang" (100), "tutorial" (500)
-// Optimized order: ["golang", "tutorial", "the"]
-// Process "golang" first (smallest result set)
 ```
 
 ---
@@ -973,479 +1188,203 @@ func OptimizeQuery(terms []string) []string {
 
 ### Sharding Strategy
 
-**Horizontal ioning by Term:**
-
 ```
-Total vocabulary: ~1 million unique terms
+Shard 1: Terms A-H (333K terms)
+Shard 2: Terms I-P (333K terms)
+Shard 3: Terms Q-Z (334K terms)
 
-Shard 1 (Terms A-H):
-├─ "api", "algorithm", "backend", "golang"
-├─ Handles ~333,000 terms
-└─ 3 replicas for fault tolerance
-
-Shard 2 (Terms I-P):
-├─ "index", "java", "kubernetes", "node"
-├─ Handles ~333,000 terms
-└─ 3 replicas for fault tolerance
-
-Shard 3 (Terms Q-Z):
-├─ "react", "search", "tutorial", "yaml"
-├─ Handles ~334,000 terms
-└─ 3 replicas for fault tolerance
+Each shard has 3 replicas (1 primary + 2 replicas)
 ```
 
-**Why this works:**
-- Evenly distributes load
-- Queries can be parallelized across shards
-- Each shard is independently scalable
-
-### Replication Strategy
+### Replication
 
 ```
-┌─────────────────────────────────────┐
-│         Shard 1 (Primary)           │
-│         Server: shard1-primary      │
-│         Data: Terms A-H             │
-└──────────────┬──────────────────────┘
-               │
-       ┌───────┴────────┐
-       ↓                ↓
-┌──────────────┐  ┌──────────────┐
-│ Shard 1      │  │ Shard 1      │
-│ (Replica 1)  │  │ (Replica 2)  │
-│ Server:      │  │ Server:      │
-│ shard1-rep1  │  │ shard1-rep2  │
-└──────────────┘  └──────────────┘
+Shard 1 Primary → Replica 1 → Replica 2
+(Replication Factor = 3)
+
+Read: Any replica (load balanced)
+Write: Primary (async to replicas)
 ```
 
-**Replication Factor:** 3 (1 primary + 2 replicas)
-
-**Read Strategy:** 
-- Reads can go to any replica (load balancing)
-- Consistent hashing determines shard
-- Round-robin across replicas
-
-**Write Strategy:**
-- Writes go to primary
-- Async replication to replicas
-- Eventual consistency model
-
-### Handling Node Failures
+### Handling Failures
 
 ```
-Scenario: Shard 1 Primary fails
-
-Before:
-[Primary] ─── [Replica 1] ─── [Replica 2]
-   ❌            ✓               ✓
-
-After (automatic failover):
-[Replica 1]* ─── [Replica 2] ─── [New Replica]
-  (promoted)         ✓              (spawning)
-  
-*Replica 1 becomes new primary
-*System spawns new replica to maintain RF=3
-```
-
-### Query Distribution
-
-```go
-// Simplified query coordinator
-func DistributedSearch(query string) Results {
-    terms := tokenize(query)
-    
-    // Group terms by shard
-    shardQueries := make(map[int][]string)
-    for _, term := range terms {
-        shardID := getShardForTerm(term)
-        shardQueries[shardID] = append(shardQueries[shardID], term)
-    }
-    
-    // Execute parallel queries
-    resultChan := make(chan ShardResult, len(shardQueries))
-    for shardID, terms := range shardQueries {
-        go func(id int, t []string) {
-            replica := selectHealthyReplica(id) // Load balance
-            result := replica.Query(t)
-            resultChan <- result
-        }(shardID, terms)
-    }
-    
-    // Collect and merge
-    var allResults []Document
-    for i := 0; i < len(shardQueries); i++ {
-        result := <-resultChan
-        allResults = append(allResults, result.Docs...)
-    }
-    
-    // Global ranking
-    return rankAndFilter(allResults, query)
-}
+Primary fails → Replica promoted → New replica spawned
 ```
 
 ---
 
 ## 🚧 Project Boundaries
 
-### What's In Scope
+### In Scope ✅
 
-✅ **Core Search Functionality:**
-- Full-text search with inverted indexes
-- TF-IDF or BM25 ranking
-- Basic boolean queries (AND, OR, NOT)
-- Phrase search
-- Result pagination
+- JWT authentication
+- Async document indexing (RabbitMQ)
+- Full-text search with TF-IDF
+- Sharding + replication
+- Autocomplete
+- Faceted search
+- Search analytics
+- Nginx load balancing
+- Docker deployment
 
-✅ **Document Management:**
-- Upload/download documents
-- Support for: PDF, TXT, JSON, Markdown
-- Basic metadata extraction
-- Document deletion
+### Out of Scope ❌
 
-✅ **Distribution:**
-- Sharding by term
-- Replication (3x)
-- Basic load balancing
-- Fault tolerance (replica promotion)
-
-✅ **Essential Features:**
-- Autocomplete (prefix search)
-- Basic faceted search (type, date, author)
-- Search analytics (query tracking)
-- Simple relevance tuning
-
-✅ **DevOps:**
-- Docker containerization
-- Basic CI/CD pipeline
-- Health monitoring endpoints
-- Prometheus metrics export
-
----
-
-### What's Out of Scope (Future Enhancements)
-
-❌ **Advanced NLP:**
-- Machine learning-based ranking
-- Entity recognition
-- Sentiment analysis
-- Multi-language support beyond English
-
-❌ **Complex Features:**
-- Geo-spatial search
+- Machine learning ranking
+- Multi-language support
 - Image/video search
-- Voice search
-- Real-time collaborative features
-
-❌ **Enterprise Features:**
-- Multi-tenancy with isolation
-- Fine-grained access control (RBAC)
-- Audit logging
-- Compliance certifications
-
-❌ **Advanced Optimization:**
-- Query result caching (Redis)
-- Hot/cold data tiering
-- Automatic index optimization
-- Machine learning for autocomplete
-
-❌ **Production Hardening:**
-- Security audit & penetration testing
+- Auto-scaling
+- Multi-tenancy
 - GDPR compliance features
-- Disaster recovery automation
-- 24/7 on-call monitoring
-
----
-
-### Simplified Assumptions
-
-1. **English-only:** No multi-language support initially
-2. **Text documents:** No image/video content analysis
-3. **Single tenant:** No user authentication/authorization
-4. **Eventual consistency:** Acceptable for analytics
-5. **Manual scaling:** No auto-scaling (manual shard addition)
-6. **Basic security:** No encryption at rest initially
 
 ---
 
 ## 📚 Learning Outcomes
 
-After completing this project, you will master:
-
-### Technical Skills
-
-**Backend Development:**
-- ✅ Building high-performance Go services
-- ✅ Designing RESTful APIs
-- ✅ Concurrent programming with goroutines
-- ✅ Error handling and logging best practices
-
-**Distributed Systems:**
-- ✅ Sharding strategies and consistent hashing
-- ✅ Replication and fault tolerance
-- ✅ Distributed query execution
-- ✅ CAP theorem in practice (Availability over Consistency)
-
-**Databases:**
-- ✅ Wide-column stores (ScyllaDB/Cassandra)
-- ✅ Data modeling for write-heavy workloads
-- ✅ Query optimization
-- ✅ Partition key design
-
-**Search Technology:**
-- ✅ Inverted index data structures
-- ✅ Information retrieval algorithms (TF-IDF, BM25)
-- ✅ Text processing pipelines
-- ✅ Relevance ranking
-
-**DevOps:**
-- ✅ Docker multi-container applications
-- ✅ Monitoring and observability (Prometheus/Grafana)
-- ✅ CI/CD pipelines
-- ✅ Load testing and performance tuning
-
-### Soft Skills
-
-- ✅ System design and architecture
-- ✅ Trade-off analysis (consistency vs. availability)
-- ✅ Technical documentation writing
-- ✅ Performance optimization mindset
+- ✅ Microservices with Go
+- ✅ JWT authentication
+- ✅ Message queues (RabbitMQ)
+- ✅ Nginx reverse proxy
+- ✅ Distributed systems
+- ✅ Search algorithms
+- ✅ ScyllaDB/Cassandra
+- ✅ Async processing
+- ✅ Load balancing
 
 ---
 
 ## 🗓️ Implementation Phases
 
 ### Phase 1: Foundation (Week 1-2)
-**Goal:** Basic single-node search engine
 
-- [ ] Set up Go project structure
-- [ ] Implement basic tokenizer
-- [ ] Build in-memory inverted index
-- [ ] Create simple search function
-- [ ] Add TF-IDF ranking
-- [ ] Write unit tests
+- [ ] Project setup + Go structure
+- [ ] Basic tokenizer
+- [ ] In-memory inverted index
+- [ ] Simple search + TF-IDF
 
-**Deliverable:** Search single documents in memory
+### Phase 2: Authentication (Week 3)
 
----
+- [ ] Auth service with JWT
+- [ ] PostgreSQL integration
+- [ ] User registration/login
+- [ ] Token validation
 
-### Phase 2: Persistence (Week 3)
-**Goal:** Store indexes in ScyllaDB
+### Phase 3: Nginx Setup (Week 4)
 
-- [ ] Set up ScyllaDB with Docker
-- [ ] Design database schema
-- [ ] Implement ScyllaDB client in Go
-- [ ] Migrate inverted index to ScyllaDB
-- [ ] Add document metadata storage
-- [ ] Implement document upload/download
+- [ ] Configure Nginx
+- [ ] Service routing
+- [ ] SSL setup
+- [ ] Rate limiting
 
-**Deliverable:** Persistent search with ScyllaDB
+### Phase 4: Async Indexing (Week 5)
 
----
+- [ ] RabbitMQ setup
+- [ ] Producer (API)
+- [ ] Consumer (Worker)
+- [ ] Retry logic + DLQ
 
-### Phase 3: Object Storage (Week 4)
-**Goal:** Store documents in MinIO
+### Phase 5: Persistence (Week 6)
 
-- [ ] Set up MinIO with Docker
-- [ ] Integrate MinIO SDK in Go
-- [ ] Implement document upload to MinIO
-- [ ] Extract text from PDFs
-- [ ] Handle JSON and TXT files
-- [ ] Link MinIO paths with ScyllaDB metadata
+- [ ] ScyllaDB setup
+- [ ] Schema design
+- [ ] Migrate index to ScyllaDB
+- [ ] MinIO integration
 
-**Deliverable:** Full document management system
+### Phase 6: Distribution (Week 7-8)
 
----
+- [ ] Multi-node ScyllaDB
+- [ ] Sharding implementation
+- [ ] Query coordinator
+- [ ] Result merging
 
-### Phase 4: Distribution (Week 5-6)
-**Goal:** Multi-node distributed search
+### Phase 7: Replication (Week 9)
 
-- [ ] Implement consistent hashing for sharding
-- [ ] Set up multiple ScyllaDB nodes
-- [ ] Build query coordinator
-- [ ] Implement parallel query execution
-- [ ] Add result merging and re-ranking
-- [ ] Handle shard failures
+- [ ] Configure replication
+- [ ] Failover logic
+- [ ] Health checks
 
-**Deliverable:** Distributed search across multiple nodes
+### Phase 8: Features (Week 10-11)
 
----
+- [ ] Autocomplete
+- [ ] Faceted search
+- [ ] Analytics service
+- [ ] Search tracking
 
-### Phase 5: Replication (Week 7)
-**Goal:** Fault tolerance
+### Phase 9: Monitoring (Week 12)
 
-- [ ] Configure ScyllaDB replication factor
-- [ ] Implement replica selection logic
-- [ ] Add health checks for nodes
-- [ ] Build automatic failover mechanism
-- [ ] Test node failure scenarios
+- [ ] Prometheus metrics
+- [ ] Grafana dashboards
+- [ ] Logging
+- [ ] Alerting
 
-**Deliverable:** Fault-tolerant search system
+### Phase 10: Polish (Week 13)
 
----
-
-### Phase 6: Features (Week 8-9)
-**Goal:** Enhanced search capabilities
-
-- [ ] Implement autocomplete with prefix tree
-- [ ] Add faceted search (filters)
-- [ ] Build search analytics tracking
-- [ ] Create phrase search support
-- [ ] Add boolean operators (AND, OR, NOT)
-- [ ] Implement result highlighting
-
-**Deliverable:** Feature-rich search engine
-
----
-
-### Phase 7: API & Documentation (Week 10)
-**Goal:** Production-ready API
-
-- [ ] Design RESTful API endpoints
-- [ ] Add request validation
-- [ ] Implement pagination
-- [ ] Write API documentation (Swagger/OpenAPI)
-- [ ] Add rate limiting
-- [ ] Create example clients
-
-**Deliverable:** Complete REST API with docs
-
----
-
-### Phase 8: Monitoring & DevOps (Week 11)
-**Goal:** Observability
-
-- [ ] Add Prometheus metrics
-- [ ] Set up Grafana dashboards
-- [ ] Implement structured logging
-- [ ] Create health check endpoints
-- [ ] Build Docker Compose for full stack
-- [ ] Write deployment guide
-
-**Deliverable:** Production-ready deployment setup
-
----
-
-### Phase 9: Optimization (Week 12)
-**Goal:** Performance tuning
-
-- [ ] Benchmark query performance
-- [ ] Optimize ScyllaDB queries
-- [ ] Add query result caching (optional Redis)
-- [ ] Tune Go performance (profiling)
-- [ ] Load test with k6 or Gatling
-- [ ] Document performance characteristics
-
-**Deliverable:** Optimized, benchmarked system
-
----
-
-### Phase 10: Documentation & Polish (Week 13)
-**Goal:** Portfolio-ready project
-
-- [ ] Write comprehensive README
-- [ ] Create architecture diagrams
-- [ ] Record demo video
-- [ ] Write blog post explaining key concepts
-- [ ] Clean up code and add comments
-- [ ] Prepare for GitHub showcase
-
-**Deliverable:** Complete portfolio project
+- [ ] Documentation
+- [ ] Demo video
+- [ ] Performance tuning
+- [ ] GitHub showcase
 
 ---
 
 ## 🎯 Success Metrics
 
-Your search engine should achieve:
-
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| **Query Latency (p50)** | <50ms | 50% of queries under 50ms |
-| **Query Latency (p99)** | <200ms | 99% of queries under 200ms |
-| **Throughput** | 1,000 QPS | Queries per second per node |
-| **Index Size** | 1M+ docs | Successfully index 1 million documents |
-| **Availability** | 99.9% | Uptime with single node failure |
-| **Relevance** | User testing | Top 3 results relevant for test queries |
-
----
-
-## 📖 Recommended Resources
-
-### Books
-- **"Introduction to Information Retrieval"** by Manning, Raghavan, Schütze
-- **"Designing Data-Intensive Applications"** by Martin Kleppmann
-- **"Cassandra: The Definitive Guide"** by Jeff Carpenter
-
-### Online Resources
-- [Go by Example](https://gobyexample.com/)
-- [ScyllaDB University](https://university.scylladb.com/)
-- [Inverted Index Tutorial](https://nlp.stanford.edu/IR-book/html/htmledition/a-first-take-at-building-an-inverted-index-1.html)
-
-### Tools
-- [Postman](https://www.postman.com/) - API testing
-- [k6](https://k6.io/) - Load testing
-- [Prometheus](https://prometheus.io/) - Monitoring
-- [Grafana](https://grafana.com/) - Visualization
+| Metric              | Target    |
+| ------------------- | --------- |
+| Query Latency (p50) | <50ms     |
+| Query Latency (p99) | <200ms    |
+| Throughput          | 1,000 QPS |
+| Index Size          | 1M+ docs  |
+| Availability        | 99.9%     |
 
 ---
 
 ## 🚀 Getting Started
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/searchflow.git
+# Clone repository
+git clone https://github.com/amrrdev/searchflow.git
 cd searchflow
 
-# Start infrastructure with Docker Compose
-docker-compose up -d scylladb minio
+# Start all services
+docker-compose up -d
 
-# Install Go dependencies
-go mod download
+# Create first user
+curl -X POST http://localhost/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Pass123!"}'
 
-# Run the indexing service
-go run cmd/indexer/main.go
+# Login
+curl -X POST http://localhost/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Pass123!"}'
 
-# Run the search service
-go run cmd/search/main.go
-
-# Run tests
-go test ./...
-
-# Upload a document
-curl -X POST http://localhost:8080/api/v1/documents \
+# Upload document
+curl -X POST http://localhost/api/v1/documents \
+  -H "Authorization: Bearer <token>" \
   -F "file=@example.pdf" \
   -F "title=Example Document"
 
 # Search
-curl "http://localhost:8080/api/v1/search?q=golang+tutorial"
+curl "http://localhost/api/v1/search?q=golang" \
+  -H "Authorization: Bearer <token>"
 ```
-
----
-
-## 🤝 Contributing
-
-This is a learning project, but contributions are welcome!
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Write tests
-5. Submit a pull request
 
 ---
 
 ## 📄 License
 
-MIT License - Feel free to use this for learning and portfolio purposes.
+MIT License
 
 ---
 
 ## 👤 Author
 
 **Amr Ashraf Mubarak**
+
 - GitHub: [@amrrdev](https://github.com/amrrdev)
 - LinkedIn: [amramubarak](https://linkedin.com/in/amramubarak)
 - Email: amrrdev@gmail.com
 
 ---
 
-**Built with ❤️ to learn distributed systems and search technology**
+**Built with ❤️ to master distributed systems and search technology**
