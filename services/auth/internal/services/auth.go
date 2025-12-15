@@ -7,13 +7,14 @@ import (
 
 	"github.com/amrrdev/trawl/services/auth/internal/db"
 	"github.com/amrrdev/trawl/services/auth/internal/repository"
+	"github.com/amrrdev/trawl/services/shared/jwt"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuthService struct {
 	repo           repository.UserRepository
 	hashingService *HashingService
-	jwtService     *JWTService
+	jwtService     *jwt.Service
 }
 
 type RegisterResponse struct {
@@ -30,7 +31,7 @@ type LoginResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-func NewAuthService(repo repository.UserRepository, hashingService *HashingService, jwtService *JWTService) *AuthService {
+func NewAuthService(repo repository.UserRepository, hashingService *HashingService, jwtService *jwt.Service) *AuthService {
 	return &AuthService{
 		repo:           repo,
 		hashingService: hashingService,

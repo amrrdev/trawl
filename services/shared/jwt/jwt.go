@@ -1,33 +1,32 @@
-package services
+package jwt
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/amrrdev/trawl/services/auth/internal/config"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type JWTClaims struct {
+type Claims struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	jwt.RegisteredClaims
 }
 
-type JWTService struct {
+type Service struct {
 	secretKey      []byte
 	accessTokenTTL time.Duration
 }
 
-func NewJWTService(config *config.Config) *JWTService {
-	return &JWTService{
-		secretKey:      []byte(config.JWTSecretKey),
-		accessTokenTTL: config.AccessTokenTTL,
+func NewService(secretKey string, accessTokenTTL time.Duration) *Service {
+	return &Service{
+		secretKey:      []byte(secretKey),
+		accessTokenTTL: accessTokenTTL,
 	}
 }
 
-func (s *JWTService) GenerateAccessToken(userID, email string) (string, error) {
-	claims := JWTClaims{
+func (s *Service) GenerateAccessToken(userID, email string) (string, error) {
+	claims := Claims{
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -40,9 +39,8 @@ func (s *JWTService) GenerateAccessToken(userID, email string) (string, error) {
 	return token.SignedString(s.secretKey)
 }
 
-func (s *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
-
-	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(t *jwt.Token) (any, error) {
+func (s *Service) ValidateToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (any, error) {
 		return s.secretKey, nil
 	})
 
@@ -50,7 +48,7 @@ func (s *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
 		return nil, err
 	}
 
-	if claims, ok := token.Claims.(*JWTClaims); ok && token.Valid {
+	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
 		return claims, nil
 	}
 

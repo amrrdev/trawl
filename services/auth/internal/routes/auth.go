@@ -2,7 +2,7 @@ package routes
 
 import (
 	"github.com/amrrdev/trawl/services/auth/internal/handler"
-	"github.com/amrrdev/trawl/services/auth/internal/middleware"
+	"github.com/amrrdev/trawl/services/shared/middleware"
 	"github.com/gin-gonic/gin"
 )
 
