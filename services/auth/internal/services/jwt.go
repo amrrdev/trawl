@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/amrrdev/trawl/services/auth/internal/config"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -16,6 +17,13 @@ type JWTClaims struct {
 type JWTService struct {
 	secretKey      []byte
 	accessTokenTTL time.Duration
+}
+
+func NewJWTService(config *config.Config) *JWTService {
+	return &JWTService{
+		secretKey:      []byte(config.JWTSecretKey),
+		accessTokenTTL: config.AccessTokenTTL,
+	}
 }
 
 func (s *JWTService) GenerateAccessToken(userID, email string) (string, error) {

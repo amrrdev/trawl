@@ -4,6 +4,10 @@ import "golang.org/x/crypto/bcrypt"
 
 type HashingService struct{}
 
+func NewHashingService() *HashingService {
+	return &HashingService{}
+}
+
 func (h *HashingService) HashPassword(password string) (string, error) {
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {

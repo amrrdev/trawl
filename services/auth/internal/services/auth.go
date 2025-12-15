@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/amrrdev/trawl/services/auth/internal/db"
 	"github.com/amrrdev/trawl/services/auth/internal/repository"
@@ -29,21 +30,29 @@ type LoginResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
+func NewAuthService(repo repository.UserRepository, hashingService *HashingService, jwtService *JWTService) *AuthService {
+	return &AuthService{
+		repo:           repo,
+		hashingService: hashingService,
+		jwtService:     jwtService,
+	}
+}
+
 func (s *AuthService) Login(ctx context.Context, email, password string) (*LoginResponse, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		// Don't reveal if user exists or not for security
-		return nil, fmt.Errorf("invalid email or password")
+		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// Check if user is active
 	if !user.IsActive.Bool {
 		return nil, fmt.Errorf("account is deactivated")
 	}
 
 	isValid := s.hashingService.ComparePassword(user.Password, password)
 	if !isValid {
-		return nil, fmt.Errorf("invalid email or password")
+		return nil, fmt.Errorf("invalid credentials")
 	}
 
 	accessToken, err := s.jwtService.GenerateAccessToken(user.UserID.String(), email)
@@ -51,15 +60,23 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
 
+	name := ""
+	if user.Name.Valid {
+		name = user.Name.String
+	}
+
 	return &LoginResponse{
 		UserID:      user.UserID.String(),
 		Email:       user.Email,
-		Name:        user.Name.String,
+		Name:        name,
 		AccessToken: accessToken,
 	}, nil
 }
 
 func (s *AuthService) Register(ctx context.Context, name, email, password string) (*RegisterResponse, error) {
+	name = strings.TrimSpace(name)
+	email = strings.ToLower(strings.TrimSpace(email))
+
 	isExists, err := s.repo.CheckUserExists(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check user existence: %w", err)
@@ -87,10 +104,15 @@ func (s *AuthService) Register(ctx context.Context, name, email, password string
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
 
+	userName := ""
+	if newUser.Name.Valid {
+		userName = newUser.Name.String
+	}
+
 	return &RegisterResponse{
 		UserID:      newUser.UserID.String(),
 		Email:       newUser.Email,
-		Name:        newUser.Name.String,
+		Name:        userName,
 		AccessToken: accessToken,
 	}, nil
 }

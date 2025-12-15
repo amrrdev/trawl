@@ -6,6 +6,10 @@ import (
 
 	"github.com/amrrdev/trawl/services/auth/internal/config"
 	"github.com/amrrdev/trawl/services/auth/internal/database"
+	"github.com/amrrdev/trawl/services/auth/internal/handler"
+	"github.com/amrrdev/trawl/services/auth/internal/repository"
+	"github.com/amrrdev/trawl/services/auth/internal/server"
+	"github.com/amrrdev/trawl/services/auth/internal/services"
 )
 
 func main() {
@@ -28,4 +32,15 @@ func main() {
 	stats := database.Stats()
 	log.Printf("Active connections: %d", stats.AcquiredConns())
 
+	repo := repository.NewUserRepository(database.Pool)
+	jwtService := services.NewJWTService(config)
+	hashingService := services.NewHashingService()
+	authService := services.NewAuthService(repo, hashingService, jwtService)
+	authHandler := handler.NewAuthHandler(authService)
+
+	g := server.NewServer(authHandler)
+
+	if err := g.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
