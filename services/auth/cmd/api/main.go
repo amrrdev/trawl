@@ -7,6 +7,7 @@ import (
 	"github.com/amrrdev/trawl/services/auth/internal/config"
 	"github.com/amrrdev/trawl/services/auth/internal/database"
 	"github.com/amrrdev/trawl/services/auth/internal/handler"
+	"github.com/amrrdev/trawl/services/auth/internal/middleware"
 	"github.com/amrrdev/trawl/services/auth/internal/repository"
 	"github.com/amrrdev/trawl/services/auth/internal/server"
 	"github.com/amrrdev/trawl/services/auth/internal/services"
@@ -37,8 +38,9 @@ func main() {
 	hashingService := services.NewHashingService()
 	authService := services.NewAuthService(repo, hashingService, jwtService)
 	authHandler := handler.NewAuthHandler(authService)
+	authMiddleware := middleware.NewAuthMiddleware(jwtService)
 
-	g := server.NewServer(authHandler)
+	g := server.NewServer(authHandler, authMiddleware)
 
 	if err := g.Run(); err != nil {
 		log.Fatal(err)
