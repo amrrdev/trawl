@@ -11,7 +11,7 @@ import (
 // RunMigrations runs all pending migrations
 func RunMigrations(databaseURL string) error {
 	m, err := migrate.New(
-		"file://internal/database/migrations",
+		"file://services/auth/internal/database/migrations",
 		databaseURL,
 	)
 	if err != nil {
@@ -29,7 +29,7 @@ func RunMigrations(databaseURL string) error {
 // RollbackMigrations rolls back N migrations
 func RollbackMigrations(databaseURL string, steps int) error {
 	m, err := migrate.New(
-		"file://internal/database/migrations",
+		"file://services/auth/internal/database/migrations",
 		databaseURL,
 	)
 	if err != nil {

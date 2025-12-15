@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -36,6 +37,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	resp, err := h.authService.Register(c, body.Name, body.Email, body.Password)
 	if err != nil {
+		fmt.Println(err)
 		statusCode := http.StatusInternalServerError
 		message := "Failed to register user"
 
