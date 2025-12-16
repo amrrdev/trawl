@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/amrrdev/trawl/services/indexing/internal/types"
 	"github.com/amrrdev/trawl/services/shared/storage"
 )
 
@@ -83,4 +85,20 @@ func (d *Document) GetUploadUrl(ctx context.Context, userID, filename string) (*
 		PresignedUrl: presignedUrl,
 		ValidFor:     fmt.Sprintf("%.0f minutes", urlExpiryDuration.Minutes()),
 	}, nil
+}
+
+func (d *Document) HandlerWebhook(event *types.MinIOEvent) {
+	if event == nil {
+		return
+	}
+
+	for _, record := range event.Records {
+		if record.EventName == "s3:ObjectCreated:Put" {
+			log.Printf("File uploaded: %s (size: %d bytes)",
+				record.S3.Object.Key,
+				record.S3.Object.Size)
+
+			// TODO: push it to rabbitmq
+		}
+	}
 }

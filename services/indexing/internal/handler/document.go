@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/amrrdev/trawl/services/indexing/internal/service"
+	"github.com/amrrdev/trawl/services/indexing/internal/types"
 	"github.com/amrrdev/trawl/services/shared/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -105,4 +107,20 @@ func (h *DocumentHandler) ListFiles(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func (h *DocumentHandler) HandleWebhook(c *gin.Context) {
+	var event types.MinIOEvent
+
+	if err := c.ShouldBindJSON(&event); err != nil {
+		body, _ := c.GetRawData()
+		log.Printf("❌ Failed to parse webhook: %v\nRaw body: %s", err, string(body))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+
+	log.Printf("✅ Webhook received successfully")
+	h.documentService.HandlerWebhook(&event)
+
+	c.JSON(http.StatusOK, gin.H{"message": "webhook received"})
 }

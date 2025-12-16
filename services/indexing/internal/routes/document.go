@@ -14,4 +14,9 @@ func RegisterRoutes(router *gin.RouterGroup, documentHandler *handler.DocumentHa
 		document.POST("/download-url/:filename", documentHandler.GetDownloadUrl)
 		document.GET("", documentHandler.ListFiles)
 	}
+
+	webhooks := router.Group("/webhooks")
+	{
+		webhooks.POST("/document-uploaded", documentHandler.HandleWebhook)
+	}
 }
