@@ -26,6 +26,7 @@ func main() {
 	}
 
 	// Load config from environment
+	// TODO: 29 to 37
 	jwtSecret := getEnv("JWT_SECRET_KEY", "very-secret-key")
 	minioEndpoint := getEnv("MINIO_ENDPOINT", "localhost:9000")
 	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
