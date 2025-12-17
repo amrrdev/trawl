@@ -15,9 +15,11 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	err := godotenv.Load(".env")
+	// Load .env from root (2 levels up from cmd directory)
+	err := godotenv.Load("../../.env")
 	if err != nil {
-		return nil, fmt.Errorf("can not load env file")
+		// Not fatal - will use defaults
+		fmt.Println("Warning: .env file not found, using defaults")
 	}
 
 	ttl, err := time.ParseDuration(

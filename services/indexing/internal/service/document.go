@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/amrrdev/trawl/services/indexing/internal/queue"
 	"github.com/amrrdev/trawl/services/indexing/internal/types"
 	"github.com/amrrdev/trawl/services/shared/storage"
+	"github.com/google/uuid"
 )
 
 const (
@@ -16,7 +19,8 @@ const (
 )
 
 type Document struct {
-	storage *storage.Storage
+	storage  *storage.Storage
+	producer *queue.Producer
 }
 
 type GetUrlResponse struct {
@@ -28,9 +32,10 @@ type GetListFileResponse struct {
 	Files []map[string]any `json:"files"`
 }
 
-func NewDocument(storage *storage.Storage) *Document {
+func NewDocument(storage *storage.Storage, producer *queue.Producer) *Document {
 	return &Document{
-		storage: storage,
+		storage:  storage,
+		producer: producer,
 	}
 }
 
@@ -87,9 +92,9 @@ func (d *Document) GetUploadUrl(ctx context.Context, userID, filename string) (*
 	}, nil
 }
 
-func (d *Document) HandlerWebhook(event *types.MinIOEvent) {
+func (d *Document) HandlerWebhook(ctx context.Context, event *types.MinIOEvent) error {
 	if event == nil {
-		return
+		return fmt.Errorf("event is nil")
 	}
 
 	for _, record := range event.Records {
@@ -98,7 +103,47 @@ func (d *Document) HandlerWebhook(event *types.MinIOEvent) {
 				record.S3.Object.Key,
 				record.S3.Object.Size)
 
-			// TODO: push it to rabbitmq
+			// Decode URL-encoded object key
+			decodedKey, err := url.QueryUnescape(record.S3.Object.Key)
+			if err != nil {
+				log.Printf("Failed to decode object key: %s", record.S3.Object.Key)
+				continue
+			}
+
+			// Extract userID from object key (format: "userID/filename")
+			parts := strings.SplitN(decodedKey, "/", 2)
+			if len(parts) != 2 {
+				log.Printf("Invalid object key format: %s", decodedKey)
+				continue
+			}
+
+			userID := parts[0]
+			fileName := parts[1]
+
+			// Create indexing job
+			job := &types.IndexingJob{
+				JobID:     uuid.New().String(),
+				Type:      "document_indexing",
+				CreatedAt: time.Now(),
+				Payload: types.IndexingPayload{
+					DocID:    uuid.New().String(),
+					UserID:   userID,
+					FilePath: record.S3.Object.Key,
+					FileName: fileName,
+					FileSize: record.S3.Object.Size,
+					Metadata: map[string]string{
+						"bucket": record.S3.Bucket.Name,
+					},
+				},
+				RetryCount: 0,
+			}
+
+			if err := d.producer.PublishIndexingJob(ctx, job); err != nil {
+				log.Printf("Failed to publish job: %v", err)
+				return fmt.Errorf("failed to publish indexing job: %w", err)
+			}
 		}
 	}
+
+	return nil
 }

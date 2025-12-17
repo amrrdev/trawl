@@ -120,7 +120,12 @@ func (h *DocumentHandler) HandleWebhook(c *gin.Context) {
 	}
 
 	log.Printf("✅ Webhook received successfully")
-	h.documentService.HandlerWebhook(&event)
 
-	c.JSON(http.StatusOK, gin.H{"message": "webhook received"})
+	if err := h.documentService.HandlerWebhook(c.Request.Context(), &event); err != nil {
+		log.Printf("❌ Failed to handle webhook: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process webhook"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "webhook received and job queued"})
 }
