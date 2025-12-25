@@ -128,7 +128,7 @@ func (d *Document) HandlerWebhook(ctx context.Context, event *types.MinIOEvent) 
 				Payload: types.IndexingPayload{
 					DocID:    uuid.New().String(),
 					UserID:   userID,
-					FilePath: record.S3.Object.Key,
+					FilePath: decodedKey, // Use decoded key
 					FileName: fileName,
 					FileSize: record.S3.Object.Size,
 					Metadata: map[string]string{

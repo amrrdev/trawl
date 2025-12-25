@@ -12,8 +12,8 @@ import (
 )
 
 type Storage struct {
-	client *minio.Client
-	bucket string
+	Client *minio.Client
+	Bucket string
 }
 
 type Config struct {
@@ -34,8 +34,8 @@ func NewStorage(ctx context.Context, config *Config) (*Storage, error) {
 	}
 
 	s := &Storage{
-		client: client,
-		bucket: config.Bucket,
+		Client: client,
+		Bucket: config.Bucket,
 	}
 
 	exists, err := client.BucketExists(ctx, config.Bucket)
@@ -55,9 +55,9 @@ func NewStorage(ctx context.Context, config *Config) (*Storage, error) {
 
 func (s *Storage) GetUploadUrl(ctx context.Context, userID, filename string, duration time.Duration) (string, error) {
 	objectName := GetObjectName(userID, filename)
-	presignedUrl, err := s.client.PresignedPutObject(
+	presignedUrl, err := s.Client.PresignedPutObject(
 		ctx,
-		s.bucket,
+		s.Bucket,
 		objectName,
 		duration,
 	)
@@ -70,9 +70,9 @@ func (s *Storage) GetUploadUrl(ctx context.Context, userID, filename string, dur
 
 func (s *Storage) GetDownloadUrl(ctx context.Context, userID, filename string, duration time.Duration) (string, error) {
 	objectName := GetObjectName(userID, filename)
-	presignedUrl, err := s.client.PresignedGetObject(
+	presignedUrl, err := s.Client.PresignedGetObject(
 		ctx,
-		s.bucket,
+		s.Bucket,
 		objectName,
 		duration,
 		url.Values{},
@@ -85,9 +85,9 @@ func (s *Storage) GetDownloadUrl(ctx context.Context, userID, filename string, d
 }
 
 func (s *Storage) ListFiles(ctx context.Context, userID string) ([]map[string]any, error) {
-	objects := s.client.ListObjects(
+	objects := s.Client.ListObjects(
 		ctx,
-		s.bucket,
+		s.Bucket,
 		minio.ListObjectsOptions{Prefix: userID + "/"},
 	)
 

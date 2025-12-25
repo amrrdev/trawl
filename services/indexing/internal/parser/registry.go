@@ -17,7 +17,6 @@ func NewRegistry() *Registry {
 		parsers: make(map[string]Parser),
 	}
 
-	// Register all parsers
 	registry.Register(NewTextParser())
 	registry.Register(NewJSONParser())
 	registry.Register(NewPDFParser())
@@ -33,13 +32,11 @@ func (r *Registry) Register(parser Parser) {
 }
 
 func (r *Registry) GetParser(filePathOrType string) (Parser, error) {
-	// Try by extension first
 	ext := strings.ToLower(filepath.Ext(filePathOrType))
 	if parser, ok := r.parsers[ext]; ok {
 		return parser, nil
 	}
 
-	// Try by content type
 	contentType := strings.ToLower(filePathOrType)
 	if parser, ok := r.parsers[contentType]; ok {
 		return parser, nil

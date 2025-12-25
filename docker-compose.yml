@@ -25,11 +25,61 @@ services:
       - "9001:9001" # Console UI
     volumes:
       - minio_data:/data
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-    #   interval: 30s
-    #   timeout: 20s
-    #   retries: 3
+
+  scylla-node1:
+    image: scylladb/scylla:5.4
+    container_name: scylla-node1
+    restart: always
+    command: --seeds=scylla-node1 --smp 1 --memory 750M  --overprovisioned 1 --api-address 0.0.0.0
+    ports:
+      - "9042:9042"
+      - "10000:10000"
+    volumes:
+      - scylla_data1:/var/lib/scylla
+    networks:
+      - scylla-net
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  scylla-node2:
+    image: scylladb/scylla:5.4
+    container_name: scylla-node2
+    restart: always
+    command: --seeds=scylla-node1 --smp 1 --memory 750M  --overprovisioned 1 --api-address 0.0.0.0
+    ports:
+      - "9043:9042"
+    volumes:
+      - scylla_data2:/var/lib/scylla
+    depends_on:
+      scylla-node1:
+        condition: service_healthy
+    networks:
+      - scylla-net
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  scylla-node3:
+    image: scylladb/scylla:5.4
+    container_name: scylla-node3
+    restart: always
+    command: --seeds=scylla-node1 --smp 1 --memory 750M  --overprovisioned 1 --api-address 0.0.0.0
+    ports:
+      - "9044:9042"
+    volumes:
+      - scylla_data3:/var/lib/scylla
+    depends_on:
+      scylla-node1:
+        condition: service_healthy
+      scylla-node2:
+        condition: service_healthy
+    networks:
+      - scylla-net
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -48,3 +98,10 @@ volumes:
   postgres_data:
   minio_data:
   rabbitmq_data:
+  scylla_data1:
+  scylla_data2:
+  scylla_data3:
+
+networks:
+  scylla-net:
+    driver: bridge

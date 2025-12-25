@@ -4,40 +4,37 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
-	"time"
+	"syscall"
 
-	"github.com/amrrdev/trawl/services/indexing/internal/handler"
 	"github.com/amrrdev/trawl/services/indexing/internal/queue"
 	"github.com/amrrdev/trawl/services/indexing/internal/scylladb"
-	"github.com/amrrdev/trawl/services/indexing/internal/server"
-	"github.com/amrrdev/trawl/services/indexing/internal/service"
 	"github.com/amrrdev/trawl/services/indexing/internal/worker"
-	"github.com/amrrdev/trawl/services/shared/jwt"
-	"github.com/amrrdev/trawl/services/shared/middleware"
 	sharedQueue "github.com/amrrdev/trawl/services/shared/queue"
 	"github.com/amrrdev/trawl/services/shared/storage"
 	"github.com/lpernett/godotenv"
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	if err := godotenv.Load("../../.env"); err != nil {
 		log.Println("Warning: .env file not found, using defaults")
 	}
 
-	jwtSecret := getEnv("JWT_SECRET_KEY", "very-secret-key")
 	minioEndpoint := getEnv("MINIO_ENDPOINT", "localhost:9000")
 	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
 	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin123")
 	minioBucket := getEnv("MINIO_BUCKET", "trawl-documents")
 	rabbitmqURL := getEnv("RABBITMQ_URL", "amqp://rabbitmq_user:rabbitmq_password@localhost:5672/")
 	indexingQueue := getEnv("RABBITMQ_INDEXING_QUEUE", "indexing_queue")
-	port := getEnv("INDEXING_PORT", ":8003")
+	dlqName := getEnv("RABBITMQ_DLQ", "indexing_dlq")
 	scyllaHostsStr := getEnv("SCYLLADB_HOSTS", "127.0.0.1:9042")
 	scyllaHosts := strings.Split(scyllaHostsStr, ",")
 
+	// Initialize MinIO storage
 	storageClient, err := storage.NewStorage(ctx, &storage.Config{
 		Endpoint:  minioEndpoint,
 		AccessKey: minioAccessKey,
@@ -48,9 +45,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
-
 	log.Println("✓ Connected to MinIO")
 
+	// Initialize ScyllaDB
 	session, err := scylladb.Connect(scyllaHosts...)
 	if err != nil {
 		log.Fatalf("Failed to connect to ScyllaDB cluster: %v", err)
@@ -58,6 +55,7 @@ func main() {
 	defer session.Close()
 	log.Println("✓ Connected to ScyllaDB")
 
+	// Initialize RabbitMQ
 	rabbitClient, err := sharedQueue.NewRabbitMQ(rabbitmqURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
@@ -65,39 +63,23 @@ func main() {
 	defer rabbitClient.Close()
 	log.Println("✓ Connected to RabbitMQ")
 
-	producer, err := queue.NewProducer(rabbitClient, indexingQueue)
-	if err != nil {
-		log.Fatalf("Failed to initialize producer: %v", err)
-	}
-
-	jwtService := jwt.NewService(jwtSecret, 24*time.Hour)
-	authMiddleware := middleware.NewAuthMiddleware(jwtService)
-
-	documentService := service.NewDocument(storageClient, producer)
-	documentHandler := handler.NewDocumentHandler(documentService)
-
-	g := server.NewServer(documentHandler, authMiddleware)
-
-	// Initialize and start worker in background
-	dlqName := getEnv("RABBITMQ_DLQ", "indexing_queue_dlq")
+	// Initialize queue consumer
 	consumer, err := queue.NewConsumer(rabbitClient, indexingQueue, dlqName)
 	if err != nil {
 		log.Fatalf("Failed to initialize consumer: %v", err)
 	}
+	defer consumer.Close()
 
+	// Initialize worker
 	indexingWorker := worker.NewIndexingWorker(consumer, storageClient, session)
-	ctx = context.Background()
-	go func() {
-		log.Println("🚀 Starting indexing worker in background...")
-		if err := indexingWorker.Start(ctx); err != nil {
-			log.Printf("Worker stopped with error: %v", err)
-		}
-	}()
 
-	log.Printf("🚀 Indexing service (API + Worker) starting on %s", port)
-	if err := g.Run(port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Start the worker
+	log.Println("🚀 Starting indexing worker...")
+	if err := indexingWorker.Start(ctx); err != nil {
+		log.Fatalf("Worker stopped with error: %v", err)
 	}
+
+	log.Println("👋 Worker shut down gracefully")
 }
 
 func getEnv(key, defaultValue string) string {

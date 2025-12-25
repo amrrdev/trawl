@@ -73,6 +73,19 @@ func (c *Consumer) Consume() (<-chan amqp.Delivery, error) {
 	return consumed, nil
 }
 
+func (c *Consumer) Publish(data []byte, headers map[string]interface{}) error {
+	err := c.client.Channel.Publish("", c.queueName, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		Body:         data,
+		Headers:      headers,
+		DeliveryMode: amqp.Persistent,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to publish message in queue: %s", err)
+	}
+	return nil
+}
+
 func (c *Consumer) Close() error {
 	return c.client.Close()
 }
