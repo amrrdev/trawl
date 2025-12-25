@@ -1,14 +1,12 @@
 package parser
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
-	"github.com/ledongthuc/pdf"
+	"github.com/rsc/pdf"
 )
 
 type PDFParser struct{}
@@ -17,34 +15,44 @@ func NewPDFParser() *PDFParser {
 	return &PDFParser{}
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (p *PDFParser) Parse(ctx context.Context, reader io.Reader) (*ParsedDocument, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the pdf: %w", err)
 	}
 
-	readAt := bytes.NewReader(data)
+	// Check if it's a valid PDF by examining the header
+	if len(data) < 4 || !strings.HasPrefix(string(data), "%PDF") {
+		return nil, fmt.Errorf("not a PDF file: invalid header (got: %q)", string(data[:min(10, len(data))]))
+	}
 
-	pdfReader, err := pdf.NewReader(readAt, int64(len(data)))
+	// Parse the PDF
+	r, err := pdf.NewReader(strings.NewReader(string(data)), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse pdf: %w", err)
 	}
 
-	numPages := pdfReader.NumPage()
 	var textBuilder strings.Builder
+	numPages := r.NumPage()
 
 	for i := 1; i <= numPages; i++ {
-		page := pdfReader.Page(i)
+		page := r.Page(i)
 		if page.V.IsNull() {
 			continue
 		}
 
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			continue
+		content := page.Content()
+		for _, text := range content.Text {
+			textBuilder.WriteString(text.S)
+			textBuilder.WriteString(" ")
 		}
-
-		textBuilder.WriteString(text)
 		textBuilder.WriteString("\n")
 	}
 
@@ -56,7 +64,7 @@ func (p *PDFParser) Parse(ctx context.Context, reader io.Reader) (*ParsedDocumen
 	return &ParsedDocument{
 		Content: extractedText,
 		Metadata: map[string]string{
-			"pages":    strconv.Itoa(numPages),
+			"pages":    fmt.Sprintf("%d", numPages),
 			"fileType": "application/pdf",
 		},
 	}, nil

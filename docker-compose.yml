@@ -30,7 +30,7 @@ services:
     image: scylladb/scylla:5.4
     container_name: scylla-node1
     restart: always
-    command: --seeds=scylla-node1 --smp 1 --memory 750M  --overprovisioned 1 --api-address 0.0.0.0
+    command: --seeds=scylla-node1 --smp 1 --memory 384M --overprovisioned 1 --api-address 0.0.0.0 --developer-mode=1
     ports:
       - "9042:9042"
       - "10000:10000"
@@ -48,7 +48,7 @@ services:
     image: scylladb/scylla:5.4
     container_name: scylla-node2
     restart: always
-    command: --seeds=scylla-node1 --smp 1 --memory 750M  --overprovisioned 1 --api-address 0.0.0.0
+    command: --seeds=scylla-node1 --smp 1 --memory 384M --overprovisioned 1 --api-address 0.0.0.0 --developer-mode=1
     ports:
       - "9043:9042"
     volumes:
@@ -68,7 +68,7 @@ services:
     image: scylladb/scylla:5.4
     container_name: scylla-node3
     restart: always
-    command: --seeds=scylla-node1 --smp 1 --memory 750M  --overprovisioned 1 --api-address 0.0.0.0
+    command: --seeds=scylla-node1 --smp 1 --memory 384M --overprovisioned 1 --api-address 0.0.0.0 --developer-mode=1
     ports:
       - "9044:9042"
     volumes:

@@ -24,17 +24,14 @@ func Connect(hosts ...string) (*ScyllaDB, error) {
 		Session: session,
 	}
 
-	// Create tables if they don't exist
 	if err := scylla.createTables(); err != nil {
 		log.Printf("Warning: Failed to create tables: %v", err)
-		// Don't fail the connection, just warn
 	}
 
 	return scylla, nil
 }
 
 func (s *ScyllaDB) createTables() error {
-	// Create keyspace if it doesn't exist
 	keyspaceQuery := `
 		CREATE KEYSPACE IF NOT EXISTS searchflow
 		WITH REPLICATION = {
@@ -46,7 +43,6 @@ func (s *ScyllaDB) createTables() error {
 		return err
 	}
 
-	// Create inverted_index table
 	invertedIndexQuery := `
 		CREATE TABLE IF NOT EXISTS searchflow.inverted_index (
 			word text,
@@ -60,7 +56,6 @@ func (s *ScyllaDB) createTables() error {
 		return err
 	}
 
-	// Create documents table
 	documentsQuery := `
 		CREATE TABLE IF NOT EXISTS searchflow.documents (
 			doc_id uuid PRIMARY KEY,
@@ -74,7 +69,6 @@ func (s *ScyllaDB) createTables() error {
 		return err
 	}
 
-	// Create word_stats table
 	wordStatsQuery := `
 		CREATE TABLE IF NOT EXISTS searchflow.word_stats (
 			word text PRIMARY KEY,

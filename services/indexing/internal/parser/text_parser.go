@@ -33,5 +33,5 @@ func (p *TextParser) Parse(ctx context.Context, reader io.Reader) (*ParsedDocume
 }
 
 func (p *TextParser) SupportedTypes() []string {
-	return []string{"text/plain", ".txt", ".log", ".md", ".csv"}
+	return []string{"text/plain", ".txt", ".log", ".md", ".csv", ".pdf"}
 }
