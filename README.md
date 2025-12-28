@@ -157,7 +157,7 @@ SearchFlow implements TF-IDF (Term Frequency-Inverse Document Frequency) scoring
 
 **Term Frequency (TF):**
 
-```
+```ts
 TF(t, d) = count(t, d) / |d|
 ```
 
@@ -165,7 +165,7 @@ Term frequency measures how important a term is within a specific document. Raw 
 
 **Inverse Document Frequency (IDF):**
 
-```
+```ts
 IDF(t) = log(N / df(t))
 ```
 
@@ -173,7 +173,7 @@ IDF measures how rare or common a term is across the entire corpus. Rare terms r
 
 **Final Relevance Score:**
 
-```
+```ts
 Score(q, d) = Σ TF(t, d) × IDF(t) × boost(field)
 ```
 
@@ -183,7 +183,7 @@ The final score sums TF-IDF products across all query terms. Field boosts apply 
 
 Scores are normalized by document length using cosine similarity to prevent long documents from accumulating artificially high scores:
 
-```
+```ts
 normalized_score = score / sqrt(doc_length)
 ```
 
@@ -238,7 +238,7 @@ Indexing worker failure results in job redelivery after visibility timeout. Jobs
 
 Estimate storage requirements using:
 
-```
+```ts
 index_size = corpus_size × 0.08 × replication_factor
 ```
 
