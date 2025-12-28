@@ -17,6 +17,7 @@ type Search struct {
 	scylladb  *scylladb.ScyllaDB
 	tokenizer *tokenizer.Tokenizer
 	minio     *storage.Storage
+	searcher  *Searcher
 }
 
 type SearchResult struct {
@@ -29,10 +30,14 @@ type SearchResult struct {
 }
 
 func NewSearch(scylla *scylladb.ScyllaDB, minio *storage.Storage) *Search {
+	// create a Scylla client adapter and BM25 searcher (default shard count = 4)
+	client := NewScyllaClient(scylla)
+	searcher := NewSearcher(client, 4)
 	return &Search{
 		scylladb:  scylla,
 		tokenizer: tokenizer.NewTokenizer(),
 		minio:     minio,
+		searcher:  searcher,
 	}
 }
 
@@ -42,85 +47,32 @@ func (s *Search) Search(ctx context.Context, query string) ([]SearchResult, erro
 		return []SearchResult{}, nil
 	}
 
-	log.Printf("🔍 Search query: %q", query)
+	log.Printf("🔍 Search query (BM25): %q", query)
 
-	tokens := s.tokenizer.Tokenize(query)
-	log.Printf("🔍 Tokenized to %d tokens: %v", len(tokens), tokens)
-
-	if len(tokens) == 0 {
-		log.Printf("⚠️  No valid tokens found in query")
-		return []SearchResult{}, nil
+	// Delegate candidate retrieval & scoring to the BM25 Searcher implemented in query.go
+	candidates, err := s.searcher.Search(ctx, query, 50)
+	if err != nil {
+		return nil, err
 	}
 
-	uniqueTokens := make(map[string]bool)
-	var filteredTokens []tokenizer.Token
-	for _, token := range tokens {
-		if !uniqueTokens[token.Word] {
-			uniqueTokens[token.Word] = true
-			filteredTokens = append(filteredTokens, token)
-		}
-	}
-
-	validTokens := 0
-	for _, token := range filteredTokens {
-		exists, err := s.tokenExistsInIndex(ctx, token.Word)
-		if err != nil {
-			log.Printf("⚠️  Error checking if token %q exists: %v", token.Word, err)
-			continue
-		}
-		if exists {
-			validTokens++
-		} else {
-			log.Printf("⚠️  Token %q not found in index", token.Word)
-		}
-	}
-
-	if validTokens == 0 {
-		log.Printf("⚠️  No valid tokens found in index for query: %q", query)
-		return []SearchResult{}, nil
-	}
-
-	log.Printf("🔍 Found %d/%d tokens in index", validTokens, len(filteredTokens))
-
-	docScores := make(map[gocql.UUID]float64)
-	docMatches := make(map[gocql.UUID][]string)
-	totalDocsFound := 0
-
-	for _, token := range filteredTokens {
-		docs, err := s.queryInvertedIndex(ctx, token.Word)
-		if err != nil {
-			log.Printf("⚠️  Failed to query inverted index for token %q: %v", token.Word, err)
-			continue
-		}
-
-		log.Printf("🔍 Token %q found in %d documents", token.Word, len(docs))
-		totalDocsFound += len(docs)
-
-		for _, doc := range docs {
-			tfScore := float64(doc.Frequency)
-			docScores[doc.DocID] += tfScore
-			docMatches[doc.DocID] = append(docMatches[doc.DocID], token.Word)
-		}
-	}
-
-	log.Printf("🔍 Total documents found across all tokens: %d", totalDocsFound)
-	log.Printf("🔍 Unique documents with matches: %d", len(docScores))
-
-	if len(docScores) == 0 {
-		log.Printf("⚠️  No documents found matching the query")
+	if len(candidates) == 0 {
+		log.Printf("⚠️  No candidates returned from searcher for query: %q", query)
 		return []SearchResult{}, nil
 	}
 
 	var results []SearchResult
-	for docID, score := range docScores {
-		doc, err := s.getDocument(ctx, docID)
+	for _, c := range candidates {
+		// convert doc id string to UUID for metadata lookup
+		id, err := gocql.ParseUUID(c.DocID)
 		if err != nil {
-			log.Printf("⚠️  Failed to get document %s: %v", docID, err)
+			log.Printf("⚠️  invalid doc id from index: %s", c.DocID)
 			continue
 		}
-
-		matchCount := len(docMatches[docID])
-		finalScore := score * float64(matchCount)
+		doc, err := s.getDocument(ctx, id)
+		if err != nil {
+			log.Printf("⚠️  Failed to get document %s: %v", id, err)
+			continue
+		}
 
 		downloadURL := ""
 		if doc.FilePath != "" {
@@ -133,24 +85,19 @@ func (s *Search) Search(ctx context.Context, query string) ([]SearchResult, erro
 		}
 
 		results = append(results, SearchResult{
-			DocID:       docID.String(),
+			DocID:       c.DocID,
 			Title:       doc.Title,
 			Author:      doc.Author,
-			Score:       finalScore,
+			Score:       c.Score,
 			DownloadURL: downloadURL,
 		})
 	}
 
-	log.Printf("🔍 Generated %d search results", len(results))
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 	if len(results) > 50 {
 		results = results[:50]
 	}
-
+	log.Printf("🔍 Generated %d search results (BM25)", len(results))
 	return results, nil
 }
 

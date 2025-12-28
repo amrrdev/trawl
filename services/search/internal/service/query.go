@@ -7,6 +7,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/amrrdev/trawl/services/search/internal/tokenizer"
 )
 
 type ScyllaClient interface {
@@ -26,8 +28,11 @@ type PostingsResponse struct {
 }
 
 type DocScore struct {
-	DocID string
-	Score float64
+	DocID   string
+	Score   float64
+	TF      int
+	DocLen  int
+	DocFreq int
 }
 
 type Searcher struct {
@@ -56,7 +61,13 @@ func (s *Searcher) routeTerms(terms []string) map[int][]string {
 }
 
 func (s *Searcher) Search(ctx context.Context, query string, topK int) ([]DocScore, error) {
-	terms := tokenize(query)
+	// use the project's tokenizer to normalize, lowercase and stem terms
+	tk := tokenizer.NewTokenizer()
+	toks := tk.Tokenize(query)
+	var terms []string
+	for _, t := range toks {
+		terms = append(terms, t.Word)
+	}
 	termToShards := s.routeTerms(terms)
 	type shardResult struct {
 		resp PostingsResponse
@@ -93,30 +104,26 @@ func (s *Searcher) Search(ctx context.Context, query string, topK int) ([]DocSco
 	return merged, nil
 }
 
-func tokenize(q string) []string {
-	var out []string
-	cur := ""
-	for _, r := range q {
-		if r == ' ' || r == '\t' || r == '\n' {
-			if cur != "" {
-				out = append(out, cur)
-				cur = ""
-			}
-			continue
-		}
-		cur += string(r)
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
-}
-
 func mergeShardCandidates(shardResponses []PostingsResponse, topK int) []DocScore {
 	var all []DocScore
+	totalDocs := 0
+	totalDocLen := 0
+	docCount := 0
+	for _, sr := range shardResponses {
+		totalDocs += sr.DocCount
+		for _, d := range sr.Results {
+			totalDocLen += d.DocLen
+			docCount++
+		}
+	}
+	avgDocLen := 1.0
+	if docCount > 0 {
+		avgDocLen = float64(totalDocLen) / float64(docCount)
+	}
 	for _, sr := range shardResponses {
 		for _, d := range sr.Results {
-			all = append(all, d)
+			score := bm25Score(d.TF, d.DocLen, avgDocLen, d.DocFreq, totalDocs, 1.2, 0.75)
+			all = append(all, DocScore{DocID: d.DocID, Score: score, TF: d.TF, DocLen: d.DocLen, DocFreq: d.DocFreq})
 		}
 	}
 	h := &minHeap{}
